@@ -1,129 +1,197 @@
 #!/usr/bin/python3
-"""Markdown to HTML"""
-
-
+"""
+Module for storing the markdown to html script.
+"""
+from sys import argv, stderr
+from os.path import exists
+from hashlib import md5
 import re
-import sys
-import hashlib
+from time import sleep
 
 
-dictwrap = {"#": ["<h1>", "</h1>"],
-            "##": ["<h2>", "</h2>"],
-            "###": ["<h3>", "</h3>"],
-            "####": ["<h4>", "</h4>"],
-            "#####": ["<h5>", "</h5>"],
-            "######": ["<h6>", "</h6>"],
-            "-": ["<li>", "</li>", "<ul>\n", "\n</ul>"],
-            "*": ["<li>", "</li>", "<ol>\n", "\n</ol>"]}
+def h(line):
+    """
+    Creates a heading html element
+    <h1..6>...</h1..6}>
+    """
+    line = line.replace("\n", "")
+
+    line = line.strip()
+    parse_space = line.split(" ")
+
+    level = parse_space[0].count("#")
+
+    if (level > 6):
+        return(line)
+
+    # Removes closing symbols at end of line.
+    if len(parse_space[-1]) == parse_space[-1].count("#"):
+        parse_space = parse_space[0:-1]
+
+    # Concatenates the content string.
+    content = ""
+    for word in parse_space[1:]:
+        content += word + " "
+    content = content[0:-1]
+
+    return("<h{}>{}</h{}>".format(level, content, level))
 
 
-def wraptext(text, tag1, tag2):
-    """wrap a text with two tags"""
-    return tag1 + text + tag2
+def li(line, flags):
+    """
+    Creates a list item html element.
+    <li>...</li>
+    """
+    line = line.replace("\n", "")
+    line = line.strip()
+    parse_space = line.split(" ")
+
+    # Concatenates the content string.
+    content = ""
+    for word in parse_space[1:]:
+        content += word + " "
+    content = content[0:-1]
+    content = "<li>{}</li>\n".format(content)
+
+    # if "-s" in flags:
+    #     content = " " + content
+
+    return(content)
 
 
-def markdown2html(mdFilename, HTMLFilename):
-    """Convert a .md file into a .html format"""
-    with open(mdFilename, "r") as mdFile:
-        lines = mdFile.read().split("\n\n")
+def clean_line(line):
+    """
+    Styling tags with the use of Regular expressions.
+    """
+    # Replace ** for <b> tags
+    line = re.sub(r"\*\*(\S+)", r"<b>\1", line)
+    line = re.sub(r"(\S+)\*\*", r"\1</b>", line)
 
-    htmlLines = []
-    for line in lines:
-        if line == '':
-            continue
-        if line == lines[-1]:
-            line = line[:-1]
+    # Replace __ for <em> tags
+    line = re.sub(r"\_\_(\S+)", r"<em>\1", line)
+    line = re.sub(r"(\S+)\_\_", r"\1</em>", line)
 
-        md5Tags = re.findall("\[\[[^\[\]]*\]\]", line)
-        for tag in md5Tags:
-            if tag != '':
-                aux = tag.replace('[[', '')
-                aux = aux.replace(']]', '')
-                encrypt = hashlib.md5()
-                encrypt.update(aux.encode("utf-8"))
-                encrypt = encrypt.hexdigest()
-                line = line.replace(tag, encrypt)
+    # Replace [[<content>]] for md5 hash of content.
+    line = re.sub(r"\[\[(.*)\]\]", md5(r"\1".encode()).hexdigest(), line)
 
-        noCTags = re.findall("\(\([^\(\)]*\)\)", line)
-        for tag in noCTags:
-            if tag != '':
-                aux = tag.replace('((', '').replace('))', '')
-                aux = aux. replace('c', '').replace('C', '')
-                line = line.replace(tag, aux)
+    # Replace ((<content>)) for no C characters on content.
+    result = re.search(r"(\(\((.*)\)\))", line)
+    if result is not None:
+        content = result.group(2)
+        content = re.sub("[cC]", "", content)
+        line = re.sub(r"\(\((.*)\)\)", content, line)
 
-        boldTags = re.findall("\*\*[^\*\*]*\*\*", line)
-        for tag in boldTags:
-            if tag != '':
-                line = line.replace(tag, wraptext(tag.split("**")[1],
-                                                  "<b>", "</b>"))
+    return(line)
 
-        emTags = re.findall("__[^__]*__", line)
-        for tag in emTags:
-            if tag != '':
-                line = line.replace(tag, wraptext(tag.split("__")[1],
-                                                  "<em>", "</em>"))
 
-        items = line.split("\n")
-        prevItems = items.copy()
-        wrapping = False
-        for idx, item in enumerate(items):
-            initialTag = item.split(" ")[0]
-            if initialTag in dictwrap.keys():
-                item = item.replace('{} '.format(initialTag), '')
-            if item == items[0] or wrapping is False:
-                if initialTag not in dictwrap.keys():
-                    wrapping = True
-                    item = '<p>\n{}'.format(item)
-                    if idx == len(items) - 1:
-                        item = '{}\n</p>'.format(item)
-                elif initialTag in ["-", "*"]:
-                    wrapping = True
-                    item = '{}{}{}{}'.format(dictwrap[initialTag][2],
-                                             dictwrap[initialTag][0], item,
-                                             dictwrap[initialTag][1])
-                    if idx == len(items) - 1:
-                        item = '{}{}'.format(item, dictwrap[initialTag][3])
+def mark2html(*argv):
+    """
+    Main method to parse and process markdown to html.
+    """
+    inputFile = argv[1]
+    ouputFile = argv[2]
+    flags = argv[3:]
+
+    with open(inputFile, "r") as f:
+        markdown = f.readlines()
+
+    html = []
+
+    # Iterate over lines of the read file.
+    index = 0
+    while index < len(markdown):
+        line = clean_line(markdown[index])
+
+        # If Heading.
+        if line[0] == "#":
+            html.append(h(line))
+
+        # If ordered or unordered list.
+        elif line[0] == "-" or line[0] == "*":
+            list_type = {"-": "ul", "*": "ol"}
+            current_index = index
+            ul_string = "<{}>\n".format(list_type[line[0]])
+            while (current_index < len(markdown) and
+                   markdown[current_index][0] in ["-", "*"]):
+                ul_string += li(markdown[current_index], flags)
+                current_index += 1
+            index = current_index - 1  # Because while ends one after.
+            ul_string += "</{}>\n".format(list_type[line[0]])
+            html.append(ul_string)
+
+        # If only a newline.
+        elif line[0] == "\n":
+            line = ""
+
+        # Else there are no special characters at beggining of line.
+        else:
+            paragraph = "<p>\n"
+            new_index = index
+
+            while new_index < len(markdown):
+                line = clean_line(markdown[new_index])
+                if ((new_index + 1) < len(markdown)
+                        and markdown[new_index + 1] is not None):
+                    next_line = markdown[new_index + 1]
                 else:
-                    item = wraptext(item, dictwrap[initialTag][0],
-                                    dictwrap[initialTag][1])
-            else:
-                initialPrevTag = prevItems[idx - 1].split(" ")[0]
-                if initialPrevTag != initialTag:
-                    if initialPrevTag not in dictwrap.keys()\
-                            and initialTag not in dictwrap.keys():
-                        items[idx - 1] = '{}\n<br/>'.format(items[idx - 1])
-                    elif initialPrevTag not in dictwrap.keys():
-                        wrapping = False
-                        items[idx - 1] = '{}\n</p>'.format(items[idx - 1])
-                    elif initialPrevTag in ["-", "*"]:
-                        wrapping = False
-                        items[idx - 1] = '{}{}'\
-                                         .format(items[idx - 1],
-                                                 dictwrap[initialPrevTag][3])
-                if initialTag in dictwrap.keys():
-                    item = wraptext(item, dictwrap[initialTag][0],
-                                    dictwrap[initialTag][1])
-                if idx == len(items) - 1:
-                    if initialTag not in dictwrap.keys():
-                        item = '{}\n</p>'.format(item)
-                    elif initialTag in ["-", "*"]:
-                        item = '{}{}'.format(item, dictwrap[initialTag][3])
-            items[idx] = item
-        htmlLines.append("\n".join(items))
+                    next_line = "\n"
+                if "-s" in flags:
+                    line = "    " + line
+                paragraph += line.strip() + "\n"
+                if next_line[0] in ["*", "#", "-", "\n"]:
+                    index = new_index
+                    break
 
-    with open(HTMLFilename, "w") as HTMLFile:
-        for line in htmlLines:
+                # If next line has no special characters.
+                if next_line[0] not in ["#", "-", "\n"]:
+                    if "-s" in flags:
+                        br = r"        <br />"
+                    else:
+                        br = r"<br/>"
+                    br += "\n"
+                    paragraph += br
+
+                new_index += 1
+
+            paragraph += "</p>\n"
+
+            html.append(paragraph)
+
+        index += 1
+
+    # Create html text string with corresponding newlines.
+    text = ""
+    for line in html:
+        if "\n" not in line:
             line += "\n"
-            HTMLFile.write(line)
+        text += line
+
+    if "-v" in flags:
+        print(text)
+
+    # Write into <ouputFile> file.
+    with open(ouputFile, "w") as f:
+        f.write(text)
+
+    exit(0)
+
+
+def perror(*args, **kwargs):
+    """
+    Printing to STDERR file descriptor.
+    """
+    print(*args, file=stderr, **kwargs)
 
 
 if __name__ == "__main__":
-    """main program"""
-    if len(sys.argv) <= 2:
-        sys.stderr.write("Usage: ./markdown2html.py README.md README.html\n")
-        sys.exit(1)
-    try:
-        markdown2html(sys.argv[1], sys.argv[2])
-    except FileNotFoundError:
-        sys.stderr.write("Missing <filename>\n")
-        sys.exit(1)
+
+    if len(argv) < 3:
+        perror("Usage: ./markdown2html.py README.md README.html")
+        # perror("Usage: ./markdown2html.py README.md README.html [-s]")
+        exit(1)
+
+    if exists(argv[1]) is False:
+        perror("Missing {}".format(argv[1]))
+        exit(1)
+
+    mark2html(*argv) 
